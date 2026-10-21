@@ -81,8 +81,13 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
                 file_options={"content-type": "application/pdf", "upsert": "true"}
             )
             
-        # 4. Supabase se Public URL hasil karein
-        public_url_res = supabase.storage.from_(BUCKET_NAME).get_public_url(output_filename)
+        # 4. Supabase se Public URL hasil karne ka safe tareeqa (Fixed)
+        res = supabase.storage.from_(BUCKET_NAME).get_public_url(output_filename)
+        
+        if isinstance(res, dict):
+            public_url = res.get("publicUrl") or res.get("data", {}).get("publicUrl") or str(res)
+        else:
+            public_url = str(res)
         
         # Clean up local temp files
         if os.path.exists(local_path): os.remove(local_path)
@@ -91,7 +96,7 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
         return {
             "status": "success",
             "tool": tool_name,
-            "download_url": public_url_res
+            "download_url": public_url
         }
         
     except Exception as e:
