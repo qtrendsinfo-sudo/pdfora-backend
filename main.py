@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 import os
 import shutil
+import time
 from supabase import create_client, Client
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
@@ -21,29 +22,31 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.post("/api/process-pdf")
 async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
+    local_path = None
+    output_path = None
     try:
-        # 1. File local temp mein save karein processing ke liye
-        local_path = os.path.join(TEMP_DIR, file.filename)
+        # 1. File local temp mein save karein
+        safe_filename = file.filename.replace(" ", "_")
+        local_path = os.path.join(TEMP_DIR, safe_filename)
         with open(local_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        base_name = os.path.splitext(file.filename)[0]
-        output_filename = f"processed_{base_name}.pdf"
+        base_name = os.path.splitext(safe_filename)[0]
+        timestamp_str = str(int(time.time()))
+        output_filename = f"processed_{timestamp_str}_{base_name}.pdf"
         output_path = os.path.join(TEMP_DIR, output_filename)
         
         tool = tool_name.lower().strip()
-        ext = file.filename.lower()
+        ext = safe_filename.lower()
         
-        # 2. Check if it's an Image to PDF tool or image file (Prevents PdfReader crash)
+        # 2. Image to PDF or PDF Tools logic
         if "jpg" in tool or "png" in tool or "image" in tool or ext.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             c = canvas.Canvas(output_path, pagesize=letter)
             page_width, page_height = letter
-            # Draw image safely maintaining aspect ratio
             c.drawImage(local_path, 50, 50, width=page_width-100, height=page_height-100, preserveAspectRatio=True, anchor='c')
             c.showPage()
             c.save()
         else:
-            # Dedicated Logic for PDF Tools
             reader = PdfReader(local_path)
             writer = PdfWriter()
             
@@ -79,28 +82,25 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
                     writer.write(f)
                     
             else:
-                # General fallback for PDF tools
                 shutil.copy(local_path, output_path)
             
-        # 3. Processed file ko Supabase Storage (pdfora_bucket) par upload karein
+        # 3. Upload to Supabase Storage with unique name
         with open(output_path, "rb") as f:
-            supabase.storage.from_(BUCKET_NAME).upload(
-                path=output_filename,
-                file=f,
-                file_options={"content-type": "application/pdf", "upsert": "true"}
-            )
+            file_bytes = f.read()
             
-        # 4. Supabase se Public URL hasil karein
-        res = supabase.storage.from_(BUCKET_NAME).get_public_url(output_filename)
+        supabase.storage.from_(BUCKET_NAME.strip()).upload(
+            path=output_filename,
+            file=file_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"}
+        )
+            
+        # 4. Get Public URL securely
+        res = supabase.storage.from_(BUCKET_NAME.strip()).get_public_url(output_filename)
         
         if isinstance(res, dict):
             public_url = res.get("publicUrl") or res.get("data", {}).get("publicUrl") or str(res)
         else:
             public_url = str(res)
-        
-        # Clean up local temp files
-        if os.path.exists(local_path): os.remove(local_path)
-        if os.path.exists(output_path): os.remove(output_path)
         
         return {
             "status": "success",
@@ -109,7 +109,17 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
         }
         
     except Exception as e:
+        print(f"Backend Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        
+    finally:
+        # Clean up local temp files safely
+        if local_path and os.path.exists(local_path):
+            try: os.remove(local_path)
+            except: pass
+        if output_path and os.path.exists(output_path):
+            try: os.remove(output_path)
+            except: pass
 
 if __name__ == "__main__":
     import uvicorn
