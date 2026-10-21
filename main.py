@@ -27,51 +27,60 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
         with open(local_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        output_filename = f"processed_{file.filename}"
+        base_name = os.path.splitext(file.filename)[0]
+        output_filename = f"processed_{base_name}.pdf"
         output_path = os.path.join(TEMP_DIR, output_filename)
         
         tool = tool_name.lower().strip()
+        ext = file.filename.lower()
         
-        # 2. Dedicated Logic for Specific Tools
-        reader = PdfReader(local_path)
-        writer = PdfWriter()
-        
-        if "rotate" in tool:
-            for page in reader.pages:
-                page.rotate(90)
-                writer.add_page(page)
-            with open(output_path, "wb") as f:
-                writer.write(f)
-                
-        elif "split" in tool or "remove pages" in tool:
-            # Keep first page or split logic
-            if len(reader.pages) > 0:
-                writer.add_page(reader.pages[0])
-            with open(output_path, "wb") as f:
-                writer.write(f)
-                
-        elif "watermark" in tool or "add page numbers" in tool:
-            for page in reader.pages:
-                writer.add_page(page)
-            with open(output_path, "wb") as f:
-                writer.write(f)
-                
-        elif "grayscale" in tool or "invert" in tool:
-            for page in reader.pages:
-                writer.add_page(page)
-            with open(output_path, "wb") as f:
-                writer.write(f)
-                
-        elif "compress" in tool or "repair" in tool or "flatten" in tool:
-            for page in reader.pages:
-                writer.add_page(page)
-            # Basic compression simulation via pypdf stream optimization
-            with open(output_path, "wb") as f:
-                writer.write(f)
-                
+        # 2. Check if it's an Image to PDF tool or image file (Prevents PdfReader crash)
+        if "jpg" in tool or "png" in tool or "image" in tool or ext.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            c = canvas.Canvas(output_path, pagesize=letter)
+            page_width, page_height = letter
+            # Draw image safely maintaining aspect ratio
+            c.drawImage(local_path, 50, 50, width=page_width-100, height=page_height-100, preserveAspectRatio=True, anchor='c')
+            c.showPage()
+            c.save()
         else:
-            # General fallback for conversion and other tools
-            shutil.copy(local_path, output_path)
+            # Dedicated Logic for PDF Tools
+            reader = PdfReader(local_path)
+            writer = PdfWriter()
+            
+            if "rotate" in tool:
+                for page in reader.pages:
+                    page.rotate(90)
+                    writer.add_page(page)
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                    
+            elif "split" in tool or "remove pages" in tool:
+                if len(reader.pages) > 0:
+                    writer.add_page(reader.pages[0])
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                    
+            elif "watermark" in tool or "add page numbers" in tool:
+                for page in reader.pages:
+                    writer.add_page(page)
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                    
+            elif "grayscale" in tool or "invert" in tool:
+                for page in reader.pages:
+                    writer.add_page(page)
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                    
+            elif "compress" in tool or "repair" in tool or "flatten" in tool:
+                for page in reader.pages:
+                    writer.add_page(page)
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+                    
+            else:
+                # General fallback for PDF tools
+                shutil.copy(local_path, output_path)
             
         # 3. Processed file ko Supabase Storage (pdfora_bucket) par upload karein
         with open(output_path, "rb") as f:
@@ -81,7 +90,7 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
                 file_options={"content-type": "application/pdf", "upsert": "true"}
             )
             
-        # 4. Supabase se Public URL hasil karne ka safe tareeqa (Fixed)
+        # 4. Supabase se Public URL hasil karein
         res = supabase.storage.from_(BUCKET_NAME).get_public_url(output_filename)
         
         if isinstance(res, dict):
