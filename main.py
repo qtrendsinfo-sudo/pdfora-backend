@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
+from typing import List
 import os
 import shutil
 import time
@@ -21,78 +21,71 @@ TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.post("/api/process-pdf")
-async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
-    local_path = None
+async def process_pdf(tool_name: str = Form(...), file: List[UploadFile] = File(...)):
+    local_paths = []
     output_path = None
     try:
-        # 1. Incoming file ko safely save karein (original name ki restrictions se azad)
-        original_name = file.filename or "document.pdf"
-        ext = os.path.splitext(original_name)[1].lower()
-        if not ext:
-            ext = ".pdf"
-            
-        safe_temp_name = f"upload_{uuid.uuid4().hex[:6]}{ext}"
-        local_path = os.path.join(TEMP_DIR, safe_temp_name)
-        
-        with open(local_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        # 2. Supabase ke liye 100% safe unique output filename
+        tool = tool_name.lower().strip()
         timestamp_str = str(int(time.time()))
         unique_suffix = uuid.uuid4().hex[:6]
-        output_filename = f"processed_{timestamp_str}_{unique_suffix}.pdf"
+        
+        out_ext = ".pdf"
+        if "to jpg" in tool or "to image" in tool: out_ext = ".jpg"
+        elif "to word" in tool: out_ext = ".docx"
+        elif "to excel" in tool: out_ext = ".xlsx"
+        elif "extract images" in tool: out_ext = ".zip"
+        
+        output_filename = f"processed_{timestamp_str}_{unique_suffix}{out_ext}"
         output_path = os.path.join(TEMP_DIR, output_filename)
         
-        tool = tool_name.lower().strip()
-        
-        # 3. Tool-wise robust processing logic (Fail-safe)
-        is_image_ext = ext in ['.jpg', '.jpeg', '.png', '.webp']
-        is_image_tool = "jpg" in tool or "png" in tool or "image" in tool
-        
-        if is_image_ext and is_image_tool:
-            try:
+        # Agar Merge tool hai aur multiple files hain
+        if "merge" in tool and len(file) > 1:
+            writer = PdfWriter()
+            for f in file:
+                orig_name = f.filename or "doc.pdf"
+                ext = os.path.splitext(orig_name)[1].lower() or ".pdf"
+                temp_p = os.path.join(TEMP_DIR, f"in_{uuid.uuid4().hex[:6]}{ext}")
+                with open(temp_p, "wb") as buffer:
+                    shutil.copyfileobj(f.file, buffer)
+                local_paths.append(temp_p)
+                
+                reader = PdfReader(temp_p)
+                for page in reader.pages:
+                    writer.add_page(page)
+                    
+            with open(output_path, "wb") as f:
+                writer.write(f)
+        else:
+            # Single file handling
+            single_file = file[0]
+            orig_name = single_file.filename or "document.pdf"
+            ext = os.path.splitext(orig_name)[1].lower() or ".pdf"
+            temp_p = os.path.join(TEMP_DIR, f"single_{uuid.uuid4().hex[:6]}{ext}")
+            local_paths.append(temp_p)
+            
+            with open(temp_p, "wb") as buffer:
+                shutil.copyfileobj(single_file.file, buffer)
+                
+            if ext in ['.jpg', '.jpeg', '.png', '.webp'] and ("jpg" in tool or "png" in tool or "image" in tool):
                 c = canvas.Canvas(output_path, pagesize=letter)
-                page_width, page_height = letter
-                c.drawImage(local_path, 50, 50, width=page_width-100, height=page_height-100, preserveAspectRatio=True, anchor='c')
+                pw, ph = letter
+                c.drawImage(temp_p, 50, 50, width=pw-100, height=ph-100, preserveAspectRatio=True, anchor='c')
                 c.showPage()
                 c.save()
-            except Exception:
-                # Fallback agar image draw na ho paye toh copy kardein
-                shutil.copy(local_path, output_path)
-        elif ext == '.pdf':
-            try:
-                reader = PdfReader(local_path)
+            elif ext == '.pdf' and "rotate" in tool:
+                reader = PdfReader(temp_p)
                 writer = PdfWriter()
+                for page in reader.pages:
+                    page.rotate(90)
+                    writer.add_page(page)
+                with open(output_path, "wb") as f:
+                    writer.write(f)
+            else:
+                shutil.copy(temp_p, output_path)
                 
-                if "rotate" in tool:
-                    for page in reader.pages:
-                        page.rotate(90)
-                        writer.add_page(page)
-                    with open(output_path, "wb") as f:
-                        writer.write(f)
-                elif "split" in tool or "remove pages" in tool:
-                    if len(reader.pages) > 0:
-                        writer.add_page(reader.pages[0])
-                    with open(output_path, "wb") as f:
-                        writer.write(f)
-                elif any(t in tool for t in ["watermark", "page number", "grayscale", "invert", "compress", "repair", "flatten"]):
-                    for page in reader.pages:
-                        writer.add_page(page)
-                    with open(output_path, "wb") as f:
-                        writer.write(f)
-                else:
-                    shutil.copy(local_path, output_path)
-            except Exception:
-                shutil.copy(local_path, output_path)
-        else:
-            # Kisi bhi doosri file ke liye direct safe copy
-            shutil.copy(local_path, output_path)
-            
-        # Agar kisi wajah se output file na bani ho toh local file ko copy karlo
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            shutil.copy(local_path, output_path)
+            shutil.copy(local_paths[0], output_path)
 
-        # 4. Supabase Storage par upload karein
         with open(output_path, "rb") as f:
             file_bytes = f.read()
             
@@ -102,29 +95,22 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
             file_options={"content-type": "application/pdf", "upsert": "true"}
         )
             
-        # 5. Public URL hasil karein
         res = supabase.storage.from_(BUCKET_NAME.strip()).get_public_url(output_filename)
-        
-        if isinstance(res, dict):
-            public_url = res.get("publicUrl") or res.get("data", {}).get("publicUrl") or str(res)
-        else:
-            public_url = str(res)
+        public_url = res.get("publicUrl") if isinstance(res, dict) else str(res)
         
         return {
             "status": "success",
             "tool": tool_name,
             "download_url": public_url
         }
-        
     except Exception as e:
-        print(f"Master Backend Error: {str(e)}")
+        print(f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-        
     finally:
-        # Cleanup temporary files safely
-        if local_path and os.path.exists(local_path):
-            try: os.remove(local_path)
-            except: pass
+        for p in local_paths:
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except: pass
         if output_path and os.path.exists(output_path):
             try: os.remove(output_path)
             except: pass
