@@ -10,7 +10,6 @@ from reportlab.lib.pagesizes import letter
 
 app = FastAPI(title="PDFora Supabase Backend", version="1.0")
 
-# Aapke Supabase credentials
 SUPABASE_URL = "https://pemlhozebqbnteryhyvs.supabase.co"
 SUPABASE_KEY = "sb_publishable_b_oey1FVdEkJ3ioSVNNKWQ_yMP-hiU2"
 
@@ -25,21 +24,19 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
     local_path = None
     output_path = None
     try:
-        # 1. File local temp mein save karein
-        safe_filename = file.filename.replace(" ", "_")
+        safe_filename = "".join([c for c in file.filename if c.isalnum() or c in ('_', '-', '.')])
         local_path = os.path.join(TEMP_DIR, safe_filename)
         with open(local_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        base_name = os.path.splitext(safe_filename)[0]
         timestamp_str = str(int(time.time()))
-        output_filename = f"processed_{timestamp_str}_{base_name}.pdf"
+        # Strict clean filename to prevent Supabase InvalidKey error
+        output_filename = f"processed_{timestamp_str}.pdf"
         output_path = os.path.join(TEMP_DIR, output_filename)
         
         tool = tool_name.lower().strip()
         ext = safe_filename.lower()
         
-        # 2. Image to PDF or PDF Tools logic
         if "jpg" in tool or "png" in tool or "image" in tool or ext.endswith(('.jpg', '.jpeg', '.png', '.webp')):
             c = canvas.Canvas(output_path, pagesize=letter)
             page_width, page_height = letter
@@ -84,7 +81,6 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
             else:
                 shutil.copy(local_path, output_path)
             
-        # 3. Upload to Supabase Storage with unique name
         with open(output_path, "rb") as f:
             file_bytes = f.read()
             
@@ -94,7 +90,6 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
             file_options={"content-type": "application/pdf", "upsert": "true"}
         )
             
-        # 4. Get Public URL securely
         res = supabase.storage.from_(BUCKET_NAME.strip()).get_public_url(output_filename)
         
         if isinstance(res, dict):
@@ -113,7 +108,6 @@ async def process_pdf(tool_name: str = Form(...), file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
         
     finally:
-        # Clean up local temp files safely
         if local_path and os.path.exists(local_path):
             try: os.remove(local_path)
             except: pass
