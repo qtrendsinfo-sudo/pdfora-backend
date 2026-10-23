@@ -6,7 +6,7 @@ import time
 import uuid
 from supabase import create_client, Client
 
-# Import all tools from tools folder (extract_txt removed, pdf_forms added)
+# Import all tools from tools folder
 from tools.merge import run_merge
 from tools.split import run_split
 from tools.compress import run_compress
@@ -38,7 +38,7 @@ from tools.html_to_pdf import run_html_to_pdf
 from tools.scan_to_pdf import run_scan_to_pdf
 from tools.pdf_forms import run_pdf_forms
 
-app = FastAPI(title="PDFora Backend Master Router", version="2.0")
+app = FastAPI(title="PDFora Backend Master Router", version="2.1")
 
 SUPABASE_URL = "https://pemlhozebqbnteryhyvs.supabase.co"
 SUPABASE_KEY = "sb_publishable_b_oey1FVdEkJ3ioSVNNKWQ_yMP-hiU2"
@@ -62,7 +62,8 @@ async def process_pdf(
     local_input_paths = []
     output_path = None
     try:
-        tool = tool_name.lower().strip()
+        # Normalize tool name universally (e.g. "Merge PDF" -> "merge_pdf")
+        tool = tool_name.lower().strip().replace(" ", "_").replace(".py", "")
         unique_suffix = uuid.uuid4().hex[:6]
         
         # Save uploaded files locally
@@ -76,66 +77,66 @@ async def process_pdf(
         if len(file) > 0 and file[0].filename:
             orig_filename = os.path.splitext(file[0].filename)[0]
 
-        # Route dynamically to specific tool file
-        if tool == "merge.py" or tool == "merge":
+        # Route dynamically based on normalized tool name
+        if tool in ["merge", "merge_pdf"]:
             output_path = await run_merge(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "split.py" or tool == "split":
+        elif tool in ["split", "split_pdf"]:
             output_path = await run_split(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "compress.py" or tool == "compress":
+        elif tool in ["compress", "compress_pdf"]:
             output_path = await run_compress(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "rotate.py" or tool == "rotate":
+        elif tool in ["rotate", "rotate_pdf"]:
             output_path = await run_rotate(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "organize.py" or tool == "organize":
+        elif tool in ["organize", "organize_pdf"]:
             output_path = await run_organize(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "remove pages.py" or tool == "remove_pages":
+        elif tool in ["remove_pages", "remove_page"]:
             output_path = await run_remove_pages(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "extract pages.py" or tool == "extract_pages":
+        elif tool in ["extract_pages", "extract_page"]:
             output_path = await run_extract_pages(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "pdf to word.py" or tool == "pdf_to_word":
+        elif tool == "pdf_to_word":
             output_path = await run_pdf_to_word(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "word to pdf.py" or tool == "word_to_pdf":
+        elif tool == "word_to_pdf":
             output_path = await run_word_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "pdf to excel.py" or tool == "pdf_to_excel":
+        elif tool == "pdf_to_excel":
             output_path = await run_pdf_to_excel(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "excel to pdf.py" or tool == "excel_to_pdf":
+        elif tool == "excel_to_pdf":
             output_path = await run_excel_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "pdf to ppt.py" or tool == "pdf_to_ppt":
+        elif tool == "pdf_to_ppt":
             output_path = await run_pdf_to_ppt(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "ppt to pdf.py" or tool == "ppt_to_pdf":
+        elif tool == "ppt_to_pdf":
             output_path = await run_ppt_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "pdf to jpg.py" or tool == "pdf_to_jpg":
+        elif tool in ["pdf_to_jpg", "pdf_to_image"]:
             output_path = await run_pdf_to_jpg(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "jpg to pdf.py" or tool == "jpg_to_pdf":
+        elif tool in ["jpg_to_pdf", "images_to_pdf", "png_to_pdf"]:
             output_path = await run_jpg_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "edit pdf.py" or tool == "edit_pdf":
+        elif tool == "edit_pdf":
             output_path = await run_edit_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "ocr pdf.py" or tool == "ocr_pdf":
+        elif tool in ["ocr_pdf", "ocr"]:
             output_path = await run_ocr_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "watermark pdf.py" or tool == "watermark_pdf":
+        elif tool == "watermark_pdf":
             output_path = await run_watermark_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "page number.py" or tool == "page_number":
+        elif tool in ["page_number", "page_numbers"]:
             output_path = await run_page_number(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "unlock pdf.py" or tool == "unlock_pdf":
+        elif tool == "unlock_pdf":
             output_path = await run_unlock_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "protect pdf.py" or tool == "protect_pdf":
+        elif tool == "protect_pdf":
             output_path = await run_protect_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "repair pdf.py" or tool == "repair_pdf":
+        elif tool == "repair_pdf":
             output_path = await run_repair_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "sign pdf.py" or tool == "sign_pdf":
+        elif tool == "sign_pdf":
             output_path = await run_sign_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "pdf to pdfa.py" or tool == "pdf_to_pdfa":
+        elif tool == "pdf_to_pdfa":
             output_path = await run_pdf_to_pdfa(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "compare pdf.py" or tool == "compare_pdf":
+        elif tool == "compare_pdf":
             output_path = await run_compare_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "crop pdf.py" or tool == "crop_pdf":
+        elif tool == "crop_pdf":
             output_path = await run_crop_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "redact pdf.py" or tool == "redact_pdf":
+        elif tool == "redact_pdf":
             output_path = await run_redact_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "html to pdf.py" or tool == "html_to_pdf":
+        elif tool == "html_to_pdf":
             output_path = await run_html_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
-        elif tool == "scan to pdf.py" or tool == "scan_to_pdf":
+        elif tool == "scan_to_pdf":
             output_path = await run_scan_to_pdf(local_input_paths, TEMP_DIR, orig_filename, unique_suffix)
-        elif tool == "pdf forms.py" or tool == "pdf_forms" or tool == "pdf forms":
+        elif tool in ["pdf_forms", "pdf_form"]:
             output_path = await run_pdf_forms(local_input_paths, TEMP_DIR, orig_filename, unique_suffix, extra_param)
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported tool name: {tool_name}")
