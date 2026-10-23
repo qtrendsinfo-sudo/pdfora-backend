@@ -95,7 +95,6 @@ async def process_pdf(
                 doc = fitz.open(temp_p)
                 writer = PdfWriter()
                 reader = PdfReader(temp_p)
-                # Default: sabhi pages ya agar koi specific logic ho
                 for page in reader.pages:
                     writer.add_page(page)
                 with open(output_path, "wb") as f:
@@ -141,4 +140,6 @@ async def process_pdf(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Render ke dynamic PORT environment variable ko uthane ke liye updated configuration:
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
