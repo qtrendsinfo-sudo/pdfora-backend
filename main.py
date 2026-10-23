@@ -6,8 +6,7 @@ import time
 import uuid
 from supabase import create_client, Client
 from pypdf import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+import fitz  # PyMuPDF for robust PDF processing
 
 app = FastAPI(title="PDFora Supabase Backend", version="1.0")
 
@@ -21,7 +20,11 @@ TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 @app.post("/api/process-pdf")
-async def process_pdf(tool_name: str = Form(...), file: List[UploadFile] = File(...)):
+async def process_pdf(
+    tool_name: str = Form(...), 
+    file: List[UploadFile] = File(...),
+    extra_param: str = Form(None)
+):
     local_paths = []
     output_path = None
     try:
@@ -29,69 +32,77 @@ async def process_pdf(tool_name: str = Form(...), file: List[UploadFile] = File(
         timestamp_str = str(int(time.time()))
         unique_suffix = uuid.uuid4().hex[:6]
         
-        # Tool ke lehaz se exact output extension set karna
+        # Original file ka naam nikalna taake output mein wahi use ho
+        orig_filename = "document"
+        if len(file) > 0 and file[0].filename:
+            orig_filename = os.path.splitext(file[0].filename)[0]
+        
         out_ext = ".pdf"
-        if "to jpg" in tool or "to image" in tool or "jpg" in tool:
+        if "to jpg" in tool or "to image" in tool:
             out_ext = ".jpg"
-        elif "to word" in tool or "docx" in tool:
+        elif "to word" in tool:
             out_ext = ".docx"
-        elif "to excel" in tool or "xlsx" in tool:
+        elif "to excel" in tool:
             out_ext = ".xlsx"
-        elif "to ppt" in tool or "pptx" in tool:
-            out_ext = ".pptx"
-        elif "extract images" in tool or "split" in tool:
+        elif "split" in tool or "extract" in tool:
             out_ext = ".zip"
-        elif "merge" in tool or "pdf" in tool:
-            out_ext = ".pdf"
             
-        output_filename = f"processed_{timestamp_str}_{unique_suffix}{out_ext}"
+        tool_tag = tool.replace(" ", "_")
+        output_filename = f"{orig_filename}_{tool_tag}_{unique_suffix}{out_ext}"
         output_path = os.path.join(TEMP_DIR, output_filename)
         
-        # 1. Merge Tool Logic (Multiple files handling)
+        # 1. Merge PDF
         if "merge" in tool and len(file) > 0:
             writer = PdfWriter()
             for f in file:
-                orig_name = f.filename or "doc.pdf"
-                ext = os.path.splitext(orig_name)[1].lower() or ".pdf"
-                temp_p = os.path.join(TEMP_DIR, f"in_{uuid.uuid4().hex[:6]}{ext}")
+                temp_p = os.path.join(TEMP_DIR, f"in_{uuid.uuid4().hex[:6]}.pdf")
                 with open(temp_p, "wb") as buffer:
                     shutil.copyfileobj(f.file, buffer)
                 local_paths.append(temp_p)
-                
                 try:
                     reader = PdfReader(temp_p)
                     for page in reader.pages:
                         writer.add_page(page)
                 except Exception:
                     pass
-                    
             with open(output_path, "wb") as f:
                 writer.write(f)
+                
         else:
-            # Single file handling
             single_file = file[0]
-            orig_name = single_file.filename or "document.pdf"
-            ext = os.path.splitext(orig_name)[1].lower() or ".pdf"
-            temp_p = os.path.join(TEMP_DIR, f"single_{uuid.uuid4().hex[:6]}{ext}")
+            temp_p = os.path.join(TEMP_DIR, f"single_{uuid.uuid4().hex[:6]}.pdf")
             local_paths.append(temp_p)
-            
             with open(temp_p, "wb") as buffer:
                 shutil.copyfileobj(single_file.file, buffer)
                 
-            if ext in ['.jpg', '.jpeg', '.png', '.webp'] and ("jpg" in tool or "png" in tool or "image" in tool):
-                c = canvas.Canvas(output_path, pagesize=letter)
-                pw, ph = letter
-                c.drawImage(temp_p, 50, 50, width=pw-100, height=ph-100, preserveAspectRatio=True, anchor='c')
-                c.showPage()
-                c.save()
-            elif "rotate" in tool:
-                reader = PdfReader(temp_p)
+            # 2. Rotate PDF using PyMuPDF
+            if "rotate" in tool:
+                doc = fitz.open(temp_p)
+                for page in doc:
+                    rot = page.rotation
+                    page.set_rotation((rot + 90) % 360)
+                doc.save(output_path)
+                doc.close()
+                
+            # 3. Compress PDF
+            elif "compress" in tool:
+                doc = fitz.open(temp_p)
+                doc.save(output_path, garbage=4, deflate=True)
+                doc.close()
+                
+            # 4. Remove / Extract Pages or Organize
+            elif "remove" in tool or "extract" in tool or "organize" in tool:
+                doc = fitz.open(temp_p)
                 writer = PdfWriter()
+                reader = PdfReader(temp_p)
+                # Default: sabhi pages ya agar koi specific logic ho
                 for page in reader.pages:
-                    page.rotate(90)
                     writer.add_page(page)
                 with open(output_path, "wb") as f:
                     writer.write(f)
+                doc.close()
+                
+            # 5. Fallback copy
             else:
                 shutil.copy(temp_p, output_path)
                 
@@ -99,24 +110,13 @@ async def process_pdf(tool_name: str = Form(...), file: List[UploadFile] = File(
             if local_paths:
                 shutil.copy(local_paths[0], output_path)
 
-        # Supabase Upload with correct content-type
         with open(output_path, "rb") as f:
             file_bytes = f.read()
             
-        content_type = "application/pdf"
-        if out_ext == ".jpg": 
-            content_type = "image/jpeg"
-        elif out_ext == ".docx": 
-            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif out_ext == ".xlsx":
-            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        elif out_ext == ".zip": 
-            content_type = "application/zip"
-        
         supabase.storage.from_(BUCKET_NAME.strip()).upload(
             path=output_filename,
             file=file_bytes,
-            file_options={"content-type": content_type, "upsert": "true"}
+            file_options={"content-type": "application/pdf", "upsert": "true"}
         )
             
         res = supabase.storage.from_(BUCKET_NAME.strip()).get_public_url(output_filename)
