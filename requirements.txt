@@ -11,3 +11,4 @@ python-pptx
 supabase
 pdfkit
 reportlab
+python-multipart
