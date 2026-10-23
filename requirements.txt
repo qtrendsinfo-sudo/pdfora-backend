@@ -1,7 +1,13 @@
 fastapi
 uvicorn
-supabase
-pypdf
 pymupdf
+pypdf
+pdf2docx
+python-docx
+pdfplumber
+pandas
+openpyxl
+python-pptx
+supabase
+pdfkit
 reportlab
-python-multipart
