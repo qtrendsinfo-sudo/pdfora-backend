@@ -1,7 +1,7 @@
 fastapi
 uvicorn
-pydantic
 supabase
 pypdf
+pymupdf
 reportlab
 python-multipart
